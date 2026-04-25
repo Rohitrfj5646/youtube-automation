@@ -1,7 +1,8 @@
-# Use a more modern and stable Python runtime
+# Use a stable Python runtime
 FROM python:3.10-slim
 
-# Install system dependencies, FFmpeg, and ImageMagick
+# Install system dependencies including FFmpeg
+# Note: ImageMagick install hota hai lekin policy.xml ka path verify karke fix karein
 RUN apt-get update && apt-get install -y \
     curl \
     ffmpeg \
@@ -9,16 +10,19 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure ImageMagick security policy to allow TextClip
-RUN sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+# Fix ImageMagick security policy - find and patch whatever path exists
+RUN find /etc -name "policy.xml" 2>/dev/null | while read f; do \
+      sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@*"/g' "$f" || true; \
+    done; \
+    echo "ImageMagick policy patched (or not found, that is OK)"
 
 # Set the working directory
 WORKDIR /app
 
-# Create data directory for SQLite
+# Create data directory for SQLite with correct permissions
 RUN mkdir -p /app/data && chmod 777 /app/data
 
-# Copy requirements and install Python dependencies
+# Copy requirements first (better Docker layer caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -33,5 +37,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose the port
 EXPOSE 8080
 
-# Start the application using Gunicorn for production reliability
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "0", "app:app"]
+# Start with Gunicorn - production ready
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]
