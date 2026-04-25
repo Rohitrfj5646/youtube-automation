@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: youtube-automation
+    env: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DB_PATH
+        value: /app/data/automation.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - fromGroup: youtube-automation-secrets

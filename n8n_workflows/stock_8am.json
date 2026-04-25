@@ -1,0 +1,44 @@
+{
+  "name": "YouTube_Stocks_8AM",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hours": 8
+            }
+          ]
+        }
+      },
+      "name": "Schedule",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://YOUR_RENDER_URL.onrender.com/trigger/Stocks",
+        "options": {}
+      },
+      "name": "Trigger Python",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Trigger Python",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
