@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "url": "https://YOUR_RENDER_URL.onrender.com/trigger/Forex",
+        "url": "https://youtube-automation-ughw.onrender.com/trigger/Forex",
         "options": {}
       },
       "name": "Trigger Python",
