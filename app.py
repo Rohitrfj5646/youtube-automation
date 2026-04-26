@@ -406,6 +406,84 @@ def trigger_pipeline(niche):
 def health():
     return {"status": "ok", "time": str(datetime.now())}
 
+@app.route('/status_web')
+def status_web():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='auto_mode'")
+    auto_mode = c.fetchone()
+    c.execute("SELECT topic, date FROM history ORDER BY date DESC LIMIT 5")
+    history = c.fetchall()
+    conn.close()
+    return {
+        "auto_mode": auto_mode[0] if auto_mode else "unknown",
+        "recent_uploads": [{"topic": h[0], "date": h[1]} for h in history],
+        "env_check": {
+            "GEMINI_API_KEY": "SET" if GENAI_API_KEY else "MISSING",
+            "SARVAM_API_KEY": "SET" if SARVAM_API_KEY else "MISSING",
+            "PEXELS_API_KEY": "SET" if PEXELS_API_KEY else "MISSING",
+            "TELEGRAM_BOT_TOKEN": "SET" if TELEGRAM_BOT_TOKEN else "MISSING",
+            "YT_REFRESH_TOKEN": "SET" if YT_REFRESH_TOKEN else "MISSING",
+            "YT_CLIENT_ID": "SET" if YT_CLIENT_ID else "MISSING",
+            "YT_CLIENT_SECRET": "SET" if YT_CLIENT_SECRET else "MISSING",
+        }
+    }
+
+@app.route('/test')
+def run_test():
+    results = {}
+
+    # Test 1: Gemini
+    try:
+        models_tried = []
+        script = None
+        for m in ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash']:
+            try:
+                model = genai.GenerativeModel(m)
+                r = model.generate_content("Say 'OK' in one word only.")
+                script = r.text.strip()
+                models_tried.append(f"{m}: OK")
+                break
+            except Exception as me:
+                models_tried.append(f"{m}: FAIL - {str(me)[:80]}")
+        results["gemini"] = {"status": "OK" if script else "FAIL", "models_tried": models_tried, "response": script}
+    except Exception as e:
+        results["gemini"] = {"status": "FAIL", "error": str(e)[:200]}
+
+    # Test 2: Sarvam TTS
+    try:
+        url = "https://api.sarvam.ai/text-to-speech"
+        headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
+        payload = {"text": "Test.", "target_language_code": "hi-IN", "speaker": "meera", "model": "bulbul:v2"}
+        r = requests.post(url, json=payload, headers=headers, timeout=15)
+        results["sarvam_tts"] = {"status": "OK" if r.status_code == 200 else "FAIL", "http_code": r.status_code, "response": r.text[:200]}
+    except Exception as e:
+        results["sarvam_tts"] = {"status": "FAIL", "error": str(e)[:200]}
+
+    # Test 3: Pexels API
+    try:
+        headers = {"Authorization": PEXELS_API_KEY}
+        r = requests.get("https://api.pexels.com/videos/search?query=stocks&per_page=1&orientation=portrait", headers=headers, timeout=10)
+        data = r.json()
+        vid_url = data['videos'][0]['video_files'][0]['link'] if data.get('videos') else None
+        results["pexels"] = {"status": "OK" if r.status_code == 200 else "FAIL", "http_code": r.status_code, "sample_video_url": vid_url}
+    except Exception as e:
+        results["pexels"] = {"status": "FAIL", "error": str(e)[:200]}
+
+    # Test 4: YouTube OAuth
+    try:
+        yt = get_yt_service()
+        ch = yt.channels().list(part="snippet", mine=True).execute()
+        ch_name = ch['items'][0]['snippet']['title'] if ch.get('items') else "Unknown"
+        results["youtube_oauth"] = {"status": "OK", "channel_name": ch_name}
+    except Exception as e:
+        results["youtube_oauth"] = {"status": "FAIL", "error": str(e)[:300]}
+
+    # Overall
+    all_ok = all(v.get("status") == "OK" for v in results.values())
+    results["overall"] = "ALL SYSTEMS GO ✅" if all_ok else "SOME FAILURES ❌ - Check above"
+    return results
+
 # --- TELEGRAM HANDLERS ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
