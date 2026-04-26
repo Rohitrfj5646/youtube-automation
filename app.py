@@ -26,9 +26,8 @@ SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-YT_REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")
-YT_CLIENT_ID = os.getenv("YT_CLIENT_ID")
-YT_CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET")
+YT_REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")  # Kept for reference but not used
+MAKE_WEBHOOK_URL = os.getenv("MAKE_WEBHOOK_URL")
 
 # --- LOGGING SETUP ---
 def log_config():
@@ -271,113 +270,143 @@ def get_broll(query, count=3):
         return []
 
 # --- VIDEO ASSEMBLY (MOVIEPY) ---
-def create_video(niche, script_text, voice_path, broll_urls, output_path="/tmp/final_video.mp4"):
+def download_video(url, path):
+    """Download a video from URL to a local temp file"""
     try:
-        print(f"Starting MoviePy assembly for {niche}...")
-        
-        # 1. Load Audio
-        audio = AudioFileClip(voice_path)
-        total_duration = audio.duration
-        
-        # 2. Prepare Clips
-        clips = []
-        # Split script into segments for text overlays
-        segments = [s.strip() for s in script_text.split('.') if len(s.strip()) > 10]
-        
-        # Duration per clip
-        if not segments: segments = [script_text[:50]]
-        num_clips = min(len(segments), len(broll_urls))
-        if num_clips == 0: num_clips = 1
-        
-        duration_per_clip = total_duration / num_clips
-        
-        for i in range(num_clips):
-            try:
-                # Download/Load video from URL
-                video_url = broll_urls[i] if i < len(broll_urls) else broll_urls[0]
-                clip = VideoFileClip(video_url).subclip(0, duration_per_clip)
-                
-                # Resize to vertical (9:16)
-                clip = clip.resize(height=1280)
-                # Crop to center 720x1280
-                w, h = clip.size
-                clip = clip.crop(x1=(w-720)/2, y1=0, x2=(w+720)/2, y2=1280)
-                
-                # Add text overlay
-                txt_str = segments[i] if i < len(segments) else segments[0]
-                # Note: TextClip requires ImageMagick. If not available, we can skip or use a fallback.
-                try:
-                    txt_clip = TextClip(txt_str, fontsize=40, color='white', font='Arial-Bold', 
-                                       method='caption', size=(600, None), align='center')
-                    txt_clip = txt_clip.set_duration(duration_per_clip).set_position(('center', 800))
-                    clip = CompositeVideoClip([clip, txt_clip])
-                except Exception as te:
-                    print(f"Warning: TextClip failed (likely ImageMagick missing): {te}")
-                
-                clips.append(clip)
-            except Exception as ce:
-                print(f"Error processing clip {i}: {ce}")
-        
-        if not clips:
-            print("Error: No clips generated.")
-            return None
-            
-        # 3. Concatenate and add Audio
-        final_video = concatenate_videoclips(clips, method="compose")
-        final_video = final_video.set_audio(audio)
-        
-        # 4. Write Output
-        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac", temp_audiofile="/tmp/temp-audio.m4a", remove_temp=True)
-        
-        # Close clips to free memory
-        for c in clips: c.close()
-        audio.close()
-        
-        return output_path
+        # Pick lowest quality file to save RAM
+        r = requests.get(url, stream=True, timeout=60)
+        with open(path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024*1024):
+                f.write(chunk)
+        return path
     except Exception as e:
-        print(f"MoviePy Assembly Failed: {e}")
+        print(f"Download failed: {e}")
         return None
 
-# --- YOUTUBE UPLOAD ---
-def get_yt_service():
-    creds = Credentials(
-        None,
-        refresh_token=YT_REFRESH_TOKEN,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=YT_CLIENT_ID,
-        client_secret=YT_CLIENT_SECRET
-    )
-    if not creds.valid:
-        creds.refresh(Request())
-    return build("youtube", "v3", credentials=creds)
+def get_best_pexels_url(video_item):
+    """Get lowest quality video file to conserve RAM on Render free plan"""
+    files = video_item.get('video_files', [])
+    # Sort by quality ascending (lowest first to save RAM)
+    files_sorted = sorted(files, key=lambda x: x.get('width', 9999))
+    for f in files_sorted:
+        if f.get('width', 0) >= 360:  # At least 360p
+            return f['link']
+    return files[0]['link'] if files else None
 
-def upload_to_youtube(file_path, title, description):
-    from googleapiclient.http import MediaFileUpload
-    youtube = get_yt_service()
-    
-    body = {
-        "snippet": {
-            "title": title,
-            "description": description + "\n\n#StockMarket #Finance #Hindi #NotFinancialAdvice",
-            "categoryId": "27" # Education
-        },
-        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
-    }
-    
-    media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body=body,
-        media_body=media
-    )
-    
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"Upload progress: {int(status.progress() * 100)}%")
-            
-    return response['id']
+def get_broll_with_urls(query, count=3):
+    """Get broll URLs with metadata for quality selection"""
+    try:
+        headers = {"Authorization": PEXELS_API_KEY}
+        url = f"https://api.pexels.com/videos/search?query={query}&per_page={count}&orientation=portrait"
+        res = requests.get(url, headers=headers, timeout=10).json()
+        return [get_best_pexels_url(v) for v in res.get('videos', []) if get_best_pexels_url(v)]
+    except Exception as e:
+        print(f"Pexels Error: {e}")
+        return []
+
+def create_video(niche, script_text, voice_path, broll_urls, output_path="/tmp/final_video.mp4"):
+    temp_files = []
+    try:
+        print(f"Starting video assembly for {niche}...")
+
+        # 1. Load Audio
+        audio = AudioFileClip(voice_path)
+        total_duration = min(audio.duration, 60)  # Cap at 60 seconds
+
+        # 2. Download broll videos to temp files (avoid streaming RAM issues)
+        local_videos = []
+        for i, url in enumerate(broll_urls[:3]):  # Max 3 clips
+            tmp_path = f"/tmp/broll_{i}.mp4"
+            temp_files.append(tmp_path)
+            result = download_video(url, tmp_path)
+            if result:
+                local_videos.append(tmp_path)
+            if len(local_videos) >= 3:
+                break
+
+        if not local_videos:
+            print("No broll videos downloaded. Cannot create video.")
+            return None
+
+        # 3. Build clips
+        num_clips = len(local_videos)
+        duration_per_clip = total_duration / num_clips
+        clips = []
+
+        for i, vid_path in enumerate(local_videos):
+            try:
+                clip = VideoFileClip(vid_path)
+                # Use subclip safely
+                clip_dur = min(duration_per_clip, clip.duration)
+                clip = clip.subclip(0, clip_dur)
+                # Resize to 720x1280 (9:16) - low quality to save RAM
+                clip = clip.resize(height=720)
+                w, h = clip.size
+                if w > 405:
+                    clip = clip.crop(x1=(w-405)//2, y1=0, x2=(w+405)//2, y2=720)
+                clips.append(clip)
+            except Exception as ce:
+                print(f"Clip {i} failed: {ce}")
+
+        if not clips:
+            print("No clips assembled.")
+            return None
+
+        # 4. Concatenate + Audio
+        final_video = concatenate_videoclips(clips, method="compose")
+        final_video = final_video.set_audio(audio.subclip(0, final_video.duration))
+
+        # 5. Write output - low bitrate to save RAM/disk
+        final_video.write_videofile(
+            output_path, fps=24, codec="libx264",
+            audio_codec="aac", bitrate="800k",
+            temp_audiofile="/tmp/temp-audio.m4a",
+            remove_temp=True, verbose=False, logger=None
+        )
+        print(f"Video created: {output_path}")
+
+        # 6. Cleanup
+        for c in clips:
+            try: c.close()
+            except: pass
+        audio.close()
+        final_video.close()
+
+        return output_path
+
+    except Exception as e:
+        print(f"Video assembly failed: {e}")
+        return None
+    finally:
+        # Always clean up temp video files
+        for f in temp_files:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except: pass
+
+
+
+# --- MAKE.COM UPLOAD ---
+def upload_via_make(file_path, title, description):
+    print(f"Sending video to Make.com Webhook: {file_path}")
+    if not MAKE_WEBHOOK_URL:
+        raise Exception("MAKE_WEBHOOK_URL is not set! Set it in .env or Render.")
+        
+    with open(file_path, 'rb') as f:
+        files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
+        data = {
+            'title': title,
+            'description': description + "\n\n#Shorts #Finance #NotFinancialAdvice"
+        }
+        # Webhook upload can take a bit, give it 300 seconds timeout
+        response = requests.post(MAKE_WEBHOOK_URL, files=files, data=data, timeout=300)
+        
+    if response.status_code == 200:
+        print("Successfully sent to Make.com!")
+        return "Make.com_Automation" 
+    else:
+        raise Exception(f"Make.com Webhook failed: {response.status_code} - {response.text}")
 
 # --- MAIN PIPELINE ---
 def run_pipeline(niche):
@@ -403,8 +432,8 @@ def run_pipeline(niche):
     voice_path = generate_voice(script)
     if not voice_path: return
     
-    # 4. Media
-    brolls = get_broll(niche)
+    # 4. Media (use low-quality videos to save RAM on Render free plan)
+    brolls = get_broll_with_urls(niche)
     
     # 5. Video
     video_path = create_video(niche, script, voice_path, brolls)
@@ -420,11 +449,11 @@ def run_pipeline(niche):
     
     if auto_mode == 'on':
         try:
-            vid_id = upload_to_youtube(video_path, title, script)
+            vid_id = upload_via_make(video_path, title, script)
             # Record in history
             c.execute("INSERT INTO history (topic, date) VALUES (?, ?)", (niche, datetime.now().strftime('%Y-%m-%d')))
             conn.commit()
-            bot.send_message(TELEGRAM_CHAT_ID, f"✅ Video Posted: https://youtu.be/{vid_id}")
+            bot.send_message(TELEGRAM_CHAT_ID, f"✅ Video sent to Make.com for Upload!")
         except Exception as e:
             bot.send_message(TELEGRAM_CHAT_ID, f"❌ Auto-upload failed for {niche}: {e}")
     else:
@@ -480,9 +509,7 @@ def status_web():
             "SARVAM_API_KEY": "SET" if SARVAM_API_KEY else "MISSING",
             "PEXELS_API_KEY": "SET" if PEXELS_API_KEY else "MISSING",
             "TELEGRAM_BOT_TOKEN": "SET" if TELEGRAM_BOT_TOKEN else "MISSING",
-            "YT_REFRESH_TOKEN": "SET" if YT_REFRESH_TOKEN else "MISSING",
-            "YT_CLIENT_ID": "SET" if YT_CLIENT_ID else "MISSING",
-            "YT_CLIENT_SECRET": "SET" if YT_CLIENT_SECRET else "MISSING",
+            "MAKE_WEBHOOK_URL": "SET" if MAKE_WEBHOOK_URL else "MISSING",
         }
     }
 
@@ -527,14 +554,14 @@ def run_test():
     except Exception as e:
         results["pexels"] = {"status": "FAIL", "error": str(e)[:200]}
 
-    # Test 4: YouTube OAuth
+    # Test 4: Make.com Webhook Check
     try:
-        yt = get_yt_service()
-        ch = yt.channels().list(part="snippet", mine=True).execute()
-        ch_name = ch['items'][0]['snippet']['title'] if ch.get('items') else "Unknown"
-        results["youtube_oauth"] = {"status": "OK", "channel_name": ch_name}
+        if MAKE_WEBHOOK_URL:
+            results["make_webhook"] = {"status": "OK", "url_set": True}
+        else:
+            results["make_webhook"] = {"status": "FAIL", "error": "MAKE_WEBHOOK_URL is missing in environment variables"}
     except Exception as e:
-        results["youtube_oauth"] = {"status": "FAIL", "error": str(e)[:300]}
+        results["make_webhook"] = {"status": "FAIL", "error": str(e)[:300]}
 
     # Overall
     all_ok = all(v.get("status") == "OK" for v in results.values())
