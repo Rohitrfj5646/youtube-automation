@@ -60,8 +60,8 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS history (topic TEXT, date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
-    # Default: Approval Mode ON
-    c.execute('''INSERT OR IGNORE INTO settings VALUES ('auto_mode', 'off')''')
+    # Default: Auto Upload Mode ON (no manual approval needed)
+    c.execute('''INSERT OR IGNORE INTO settings VALUES ('auto_mode', 'on')''')
     conn.commit()
     conn.close()
 
@@ -145,7 +145,8 @@ def fetch_crypto_data():
 
 # --- SCRIPT GENERATION ---
 def generate_script(niche, data):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Try latest models in order of preference
+    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
     prompt = f"""
     Act as a professional financial news anchor. Create a 60-second YouTube Short script in Hinglish (Hindi + English) for the {niche} niche.
     Data for today: {json.dumps(data)}
@@ -163,8 +164,18 @@ def generate_script(niche, data):
     - DO NOT use words like "guaranteed returns" or "prediction".
     - Keep it under 150 words.
     """
-    response = model.generate_content(prompt)
-    return response.text
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            print(f"Trying Gemini model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            print(f"Script generated successfully with model: {model_name}")
+            return response.text
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}")
+            last_error = e
+    raise Exception(f"All Gemini models failed. Last error: {last_error}")
 
 # --- VOICE GENERATION ---
 def generate_voice(text, filename="voice.mp3"):
