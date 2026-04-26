@@ -215,27 +215,48 @@ def generate_script(niche, data):
 
 # --- VOICE GENERATION ---
 def generate_voice(text, filename="voice.mp3"):
+    # Method 1: Sarvam AI TTS
     try:
         url = "https://api.sarvam.ai/text-to-speech"
         headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
         payload = {
-            "text": text,
+            "text": text[:500],  # Sarvam has text length limits
             "target_language_code": "hi-IN",
             "speaker": "anushka",
             "model": "bulbul:v2"
         }
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
-            audio_data = base64.b64decode(response.json()['audio_content'])
+            resp_json = response.json()
+            # Handle both old ('audio_content') and new ('audios') response formats
+            if 'audios' in resp_json and resp_json['audios']:
+                audio_data = base64.b64decode(resp_json['audios'][0])
+            elif 'audio_content' in resp_json:
+                audio_data = base64.b64decode(resp_json['audio_content'])
+            else:
+                print(f"Sarvam: Unknown response format: {list(resp_json.keys())}")
+                raise Exception("Unknown Sarvam response format")
             with open(filename, "wb") as f:
                 f.write(audio_data)
+            print(f"Voice generated via Sarvam AI: {filename}")
             return filename
         else:
-            print(f"Sarvam AI Error: {response.text}")
-            return None
+            print(f"Sarvam AI Error ({response.status_code}): {response.text[:200]}")
     except Exception as e:
-        print(f"Voice generation failed: {e}")
-        return None
+        print(f"Sarvam TTS failed: {e}")
+    
+    # Method 2: gTTS fallback (always free, no API key needed)
+    try:
+        from gtts import gTTS
+        print("Falling back to gTTS...")
+        tts = gTTS(text=text[:500], lang='hi', slow=False)
+        tts.save(filename)
+        print(f"Voice generated via gTTS: {filename}")
+        return filename
+    except Exception as e:
+        print(f"gTTS also failed: {e}")
+    
+    return None
 
 # --- MEDIA (B-ROLL) ---
 def get_broll(query, count=3):

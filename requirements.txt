@@ -12,3 +12,4 @@ pandas==2.2.2
 gunicorn==22.0.0
 moviepy==1.0.3
 numpy==1.26.4
+gtts==2.5.1
