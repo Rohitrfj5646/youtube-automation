@@ -145,8 +145,6 @@ def fetch_crypto_data():
 
 # --- SCRIPT GENERATION ---
 def generate_script(niche, data):
-    # Try latest models in order of preference
-    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
     prompt = f"""
     Act as a professional financial news anchor. Create a 60-second YouTube Short script in Hinglish (Hindi + English) for the {niche} niche.
     Data for today: {json.dumps(data)}
@@ -161,10 +159,12 @@ def generate_script(niche, data):
     Rules:
     - Language: Hinglish (Natural conversation like a news channel).
     - Tone: Energetic and professional.
-    - DO NOT use words like "guaranteed returns" or "prediction".
+    - DO NOT use words like 'guaranteed returns' or 'prediction'.
     - Keep it under 150 words.
     """
-    last_error = None
+    
+    # Method 1: Try Gemini SDK models
+    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash']
     for model_name in models_to_try:
         try:
             print(f"Trying Gemini model: {model_name}")
@@ -174,8 +174,44 @@ def generate_script(niche, data):
             return response.text
         except Exception as e:
             print(f"Model {model_name} failed: {e}")
-            last_error = e
-    raise Exception(f"All Gemini models failed. Last error: {last_error}")
+    
+    # Method 2: Try Gemini REST API directly (sometimes bypasses SDK quota issues)
+    try:
+        print("Trying Gemini REST API directly...")
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GENAI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        r = requests.post(api_url, json=payload, timeout=30)
+        if r.status_code == 200:
+            text = r.json()['candidates'][0]['content']['parts'][0]['text']
+            print("Script generated via REST API")
+            return text
+        else:
+            print(f"REST API failed: {r.status_code} {r.text[:100]}")
+    except Exception as e:
+        print(f"REST API method failed: {e}")
+    
+    # Method 3: Hardcoded fallback script using live data (always works)
+    print("Using hardcoded fallback script with live data")
+    if niche == "Stocks":
+        return f"""Namaste doston! Aaj ki sabse badi khabar — Nifty aaj {data.get('nifty', 'N/A')} pe band hua, 
+        change raha {data.get('nifty_change', 'N/A')} points ka. Sensex bhi {data.get('sensex', 'N/A')} pe close hua. 
+        {data.get('news', 'Market mein aaj mixed sentiment dikh raha hai.')} 
+        Agar aap market updates chahte hain daily, toh abhi subscribe karein is channel ko. 
+        Disclaimer: Yeh sirf educational information hai, koi financial advice nahi. 
+        SEBI registered advisor se salah zaroor lein."""
+    elif niche == "Forex":
+        return f"""Namaste! Aaj dollar ke against rupee ka rate hai {data.get('usd_inr', 'N/A')}. 
+        Euro rate hai {data.get('eur_inr', 'N/A')} rupaye. 
+        {data.get('sentiment', 'Forex market mein stability dikh rahi hai.')} 
+        Daily forex updates ke liye subscribe karein. 
+        Disclaimer: Yeh educational content hai, investment advice nahi."""
+    else:
+        return f"""Crypto lovers, sun lo! Bitcoin aaj {data.get('btc', 'N/A')} dollar pe hai, 
+        24 ghante mein change {data.get('btc_change', 'N/A')} percent raha. 
+        Ethereum {data.get('eth', 'N/A')} dollar pe trade ho raha hai. 
+        {data.get('trend', 'Crypto market mein volatility bani hui hai.')} 
+        Subscribe karein aur bell icon dabao updates ke liye. 
+        Disclaimer: Crypto mein invest karna high risk hai. Apna research zaroor karein."""
 
 # --- VOICE GENERATION ---
 def generate_voice(text, filename="voice.mp3"):
@@ -185,7 +221,7 @@ def generate_voice(text, filename="voice.mp3"):
         payload = {
             "text": text,
             "target_language_code": "hi-IN",
-            "speaker": "meera",
+            "speaker": "anushka",
             "model": "bulbul:v2"
         }
         response = requests.post(url, json=payload, headers=headers)
@@ -454,7 +490,7 @@ def run_test():
     try:
         url = "https://api.sarvam.ai/text-to-speech"
         headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
-        payload = {"text": "Test.", "target_language_code": "hi-IN", "speaker": "meera", "model": "bulbul:v2"}
+        payload = {"text": "Test.", "target_language_code": "hi-IN", "speaker": "anushka", "model": "bulbul:v2"}
         r = requests.post(url, json=payload, headers=headers, timeout=15)
         results["sarvam_tts"] = {"status": "OK" if r.status_code == 200 else "FAIL", "http_code": r.status_code, "response": r.text[:200]}
     except Exception as e:
