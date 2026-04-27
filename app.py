@@ -555,14 +555,14 @@ def test_upload_route():
     import threading
     def test_task():
         try:
-            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Test Upload Route Triggered...")
-            # create a small text file as dummy video
-            dummy_path = "/tmp/dummy.mp4"
-            with open(dummy_path, "w") as f:
-                f.write("dummy video data")
-            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Uploading dummy video to YouTube...")
-            vid_id = upload_to_youtube(dummy_path, "Test Render Upload", "Debug test")
-            bot.send_message(TELEGRAM_CHAT_ID, f"✅ [DEBUG] Upload Success! ID: {vid_id}")
+            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Downloading 1 clip from Pexels...")
+            brolls = get_broll_with_urls("Stocks", 1)
+            dummy_path = "/tmp/sample.mp4"
+            download_video(brolls[0], dummy_path)
+            
+            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Uploading video to YouTube (Bypassing MoviePy editing)...")
+            vid_id = upload_to_youtube(dummy_path, "Render Upload Test", "Testing direct Python upload")
+            bot.send_message(TELEGRAM_CHAT_ID, f"✅ [DEBUG] Upload Success! Link: https://youtu.be/{vid_id}")
         except Exception as e:
             bot.send_message(TELEGRAM_CHAT_ID, f"❌ [DEBUG] Upload Failed: {str(e)}")
     
