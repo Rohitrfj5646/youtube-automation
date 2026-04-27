@@ -14,6 +14,7 @@ import base64
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from googleapiclient.http import MediaFileUpload
 import telebot
 import threading
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
@@ -387,26 +388,61 @@ def create_video(niche, script_text, voice_path, broll_urls, output_path="/tmp/f
 
 
 
-# --- MAKE.COM UPLOAD ---
-def upload_via_make(file_path, title, description):
-    print(f"Sending video to Make.com Webhook: {file_path}")
-    if not MAKE_WEBHOOK_URL:
-        raise Exception("MAKE_WEBHOOK_URL is not set! Set it in .env or Render.")
-        
-    with open(file_path, 'rb') as f:
-        files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
-        data = {
+# --- YOUTUBE UPLOAD ---
+def get_youtube_service():
+    client_id = os.getenv("YT_CLIENT_ID")
+    client_secret = os.getenv("YT_CLIENT_SECRET")
+    refresh_token = os.getenv("YT_REFRESH_TOKEN")
+    
+    if not all([client_id, client_secret, refresh_token]):
+        raise Exception("Missing YouTube OAuth credentials in .env")
+
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret
+    )
+    
+    if creds.expired and creds.has_scopes():
+        pass # build() will refresh it
+    
+    return build('youtube', 'v3', credentials=creds)
+
+def upload_to_youtube(file_path, title, description):
+    print(f"Uploading {file_path} to YouTube directly via Python...")
+    youtube = get_youtube_service()
+    
+    body = {
+        'snippet': {
             'title': title,
-            'description': description + "\n\n#Shorts #Finance #NotFinancialAdvice"
+            'description': description + "\n\n#Shorts #Finance #NotFinancialAdvice",
+            'tags': ['Shorts', 'Finance', 'Crypto', 'Stocks', 'Forex'],
+            'categoryId': '27' # Education
+        },
+        'status': {
+            'privacyStatus': 'public',
+            'selfDeclaredMadeForKids': False
         }
-        # Webhook upload can take a bit, give it 300 seconds timeout
-        response = requests.post(MAKE_WEBHOOK_URL, files=files, data=data, timeout=300)
-        
-    if response.status_code == 200:
-        print("Successfully sent to Make.com!")
-        return "Make.com_Automation" 
-    else:
-        raise Exception(f"Make.com Webhook failed: {response.status_code} - {response.text}")
+    }
+    
+    media = MediaFileUpload(file_path, chunksize=-1, resumable=True, mimetype='video/mp4')
+    
+    request = youtube.videos().insert(
+        part=','.join(body.keys()),
+        body=body,
+        media_body=media
+    )
+    
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"Uploaded {int(status.progress() * 100)}%")
+            
+    print(f"Upload Complete! Video ID: {response['id']}")
+    return response['id']
 
 # --- MAIN PIPELINE ---
 def run_pipeline(niche):
@@ -449,11 +485,11 @@ def run_pipeline(niche):
     
     if auto_mode == 'on':
         try:
-            vid_id = upload_via_make(video_path, title, script)
+            vid_id = upload_to_youtube(video_path, title, script)
             # Record in history
             c.execute("INSERT INTO history (topic, date) VALUES (?, ?)", (niche, datetime.now().strftime('%Y-%m-%d')))
             conn.commit()
-            bot.send_message(TELEGRAM_CHAT_ID, f"✅ Video sent to Make.com for Upload!")
+            bot.send_message(TELEGRAM_CHAT_ID, f"✅ Video Successfully Uploaded to YouTube! ID: {vid_id}\nLink: https://youtu.be/{vid_id}")
         except Exception as e:
             bot.send_message(TELEGRAM_CHAT_ID, f"❌ Auto-upload failed for {niche}: {e}")
     else:
