@@ -520,6 +520,7 @@ def trigger_pipeline(niche):
     if niche in ["Stocks", "Forex", "Crypto"]:
         # Run in background to avoid timeout
         import threading
+        bot.send_message(TELEGRAM_CHAT_ID, f"🚀 [DEBUG] API Triggered for {niche}. Starting background pipeline...")
         threading.Thread(target=run_pipeline, args=(niche,)).start()
         return {"status": "triggered", "niche": niche}
     return {"status": "error", "message": "Invalid niche"}, 400
@@ -548,6 +549,25 @@ def status_web():
             "MAKE_WEBHOOK_URL": "SET" if MAKE_WEBHOOK_URL else "MISSING",
         }
     }
+
+@app.route('/test_upload')
+def test_upload_route():
+    import threading
+    def test_task():
+        try:
+            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Test Upload Route Triggered...")
+            # create a small text file as dummy video
+            dummy_path = "/tmp/dummy.mp4"
+            with open(dummy_path, "w") as f:
+                f.write("dummy video data")
+            bot.send_message(TELEGRAM_CHAT_ID, "🚀 [DEBUG] Uploading dummy video to YouTube...")
+            vid_id = upload_to_youtube(dummy_path, "Test Render Upload", "Debug test")
+            bot.send_message(TELEGRAM_CHAT_ID, f"✅ [DEBUG] Upload Success! ID: {vid_id}")
+        except Exception as e:
+            bot.send_message(TELEGRAM_CHAT_ID, f"❌ [DEBUG] Upload Failed: {str(e)}")
+    
+    threading.Thread(target=test_task).start()
+    return {"status": "test_upload_started"}
 
 @app.route('/test')
 def run_test():
