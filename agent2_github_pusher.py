@@ -181,12 +181,13 @@ google-auth-httplib2==0.2.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 flask==3.0.3
-google-generativeai==0.5.2
+google-generativeai==0.8.5
 pytelegrambotapi==4.17.0
 pandas==2.2.2
 gunicorn==22.0.0
 moviepy==1.0.3
 numpy==1.26.4
+gtts==2.5.1
 """
 
     with open(path, "w") as f:
