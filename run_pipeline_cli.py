@@ -80,8 +80,19 @@ def mark_as_uploaded(niche):
 def fetch_data(niche):
     try:
         if niche == "Stocks":
-            nifty = yf.Ticker("^NSEI").history(period="1d")
-            sensex = yf.Ticker("^BSESN").history(period="1d")
+            nifty_ticker = yf.Ticker("^NSEI")
+            sensex_ticker = yf.Ticker("^BSESN")
+            
+            # Try 1d, then 5d if empty
+            nifty = nifty_ticker.history(period="1d")
+            if nifty.empty: nifty = nifty_ticker.history(period="5d")
+            
+            sensex = sensex_ticker.history(period="1d")
+            if sensex.empty: sensex = sensex_ticker.history(period="5d")
+            
+            if nifty.empty or sensex.empty:
+                raise Exception("Stock data is empty for both 1d and 5d periods.")
+
             return {
                 "nifty": round(nifty['Close'].iloc[-1], 2),
                 "nifty_change": round(nifty['Close'].iloc[-1] - nifty['Open'].iloc[-1], 2),
@@ -238,8 +249,13 @@ def run(niche):
         mark_as_uploaded(niche)
         send_telegram(f"✅ Video Uploaded! ID: {vid_id}\nLink: https://youtu.be/{vid_id}")
     except Exception as e:
-        send_telegram(f"❌ Upload Failed for {niche}: {e}")
+        send_telegram(f"❌ Critical Pipeline Error for {niche}: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    niche_arg = sys.argv[1] if len(sys.argv) > 1 else "Stocks"
-    run(niche_arg)
+    try:
+        niche_arg = sys.argv[1] if len(sys.argv) > 1 else "Stocks"
+        run(niche_arg)
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
