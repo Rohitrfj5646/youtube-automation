@@ -1,0 +1,72 @@
+name: YouTube Automation Pipeline
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 AM IST (Stocks)
+    - cron: '30 2 * * *'
+    # 06:30 UTC = 12:00 PM IST (Forex)
+    - cron: '30 6 * * *'
+    # 11:30 UTC = 05:00 PM IST (Crypto)
+    - cron: '30 11 * * *'
+  workflow_dispatch:
+    inputs:
+      niche:
+        description: 'Niche to run (Stocks, Forex, Crypto)'
+        required: true
+        default: 'Stocks'
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          # Use input niche if manual, otherwise determine by time (simplistic fallback)
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            python run_pipeline_cli.py "${{ github.event.inputs.niche }}"
+          else
+            # Get current hour in UTC to guess niche
+            HOUR=$(date +%H)
+            if [ "$HOUR" -eq 2 ] || [ "$HOUR" -eq 3 ]; then NICHE="Stocks";
+            elif [ "$HOUR" -eq 6 ] || [ "$HOUR" -eq 7 ]; then NICHE="Forex";
+            else NICHE="Crypto"; fi
+            python run_pipeline_cli.py "$NICHE"
+          fi
+
+      - name: Commit and Push History
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add history.json
+          git commit -m "Update upload history [skip ci]" || echo "No changes to commit"
+          git push
