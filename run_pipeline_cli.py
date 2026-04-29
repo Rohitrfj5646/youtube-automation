@@ -231,7 +231,8 @@ def run(niche):
         return
 
     data = fetch_data(niche)
-    if not data: return
+    if not data:
+        raise Exception(f"Failed to fetch data for {niche}. Check API/Network.")
     
     script = generate_script(niche, data)
     voice = generate_voice(script)
