@@ -259,6 +259,11 @@ def run(niche):
 if __name__ == "__main__":
     try:
         niche_arg = sys.argv[1] if len(sys.argv) > 1 else "Stocks"
+        # Smart Niche Detection
+        if "Crypto" in niche_arg: niche_arg = "Crypto"
+        elif "Forex" in niche_arg: niche_arg = "Forex"
+        elif "Stocks" in niche_arg: niche_arg = "Stocks"
+        
         run(niche_arg)
     except Exception as e:
         print(f"Fatal error: {e}")
