@@ -236,13 +236,16 @@ def run(niche):
     
     script = generate_script(niche, data)
     voice = generate_voice(script)
-    if not voice: return
+    if not voice:
+        raise Exception("Failed to generate voice (Sarvam/gTTS failed).")
     
     brolls = get_broll(niche)
-    if not brolls: return
+    if not brolls:
+        raise Exception(f"Failed to get B-Roll for {niche} from Pexels.")
     
     video = create_video(niche, voice, brolls)
-    if not video: return
+    if not video:
+        raise Exception("Failed to create video (MoviePy crash?).")
     
     title = f"{niche} Update: {datetime.now().strftime('%d %b %Y')}"
     try:
