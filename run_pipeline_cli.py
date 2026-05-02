@@ -12,7 +12,8 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 import telebot
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, ColorClip
+import moviepy.video.fx.all as vfx
 import time
 
 # Load Environment Variables
@@ -123,31 +124,56 @@ def fetch_data(niche):
 
 # --- SCRIPT GENERATION ---
 def generate_script(niche, data):
-    prompt = f"Create a 60-second YouTube Short script in Hinglish for {niche}. Data: {json.dumps(data)}. Rules: Catchy hook, energetic tone, natural conversation."
+    prompt = f"""
+    Act as a professional financial news anchor for a top news channel. 
+    Create a detailed 60-second news script in Hinglish (natural Hindi + English financial terms) for the {niche} niche.
+    
+    Data for today: {json.dumps(data)}
+    
+    Structure:
+    1. Hook: Catchy opening that grabs attention.
+    2. Headlines: Top 2-3 news points based on the data.
+    3. Deep Dive: Explain the 'why' behind the numbers in simple but professional terms.
+    4. Market Sentiment: What should investors watch out for?
+    5. Call to Action: Professional invitation to subscribe for daily updates.
+    6. Disclaimer: Standard financial disclaimer.
+    
+    Rules:
+    - Tone: Energetic, authoritative, and informative.
+    - Style: Natural conversation, not robotic.
+    - Length: Approximately 180-220 words (to hit 60 seconds).
+    - Language: Primarily Hindi with English technical terms (Market, Stocks, Bullish, Bearish, etc.).
+    - DO NOT use generic phrases; use the actual data provided.
+    """
     
     # Try Gemini
     for model_name in ['gemini-2.0-flash', 'gemini-1.5-flash']:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            return response.text
+            script = response.text.strip()
+            if len(script.split()) > 100: # Ensure it's not too short
+                return script
         except Exception as e:
             print(f"Gemini {model_name} failed: {e}")
     
-    # Fallback
+    # Fallback (Improved)
     print("Using hardcoded fallback script...")
     if niche == "Stocks":
-        return f"Nifty aaj {data.get('nifty')} pe band hua. Market mein tezi dikh rahi hai. Subscribe karein!"
-    return f"Latest {niche} update: Check out the numbers! Follow for more."
+        return f"Namaste! Stock market mein aaj halchal tez rahi. Nifty {data.get('nifty')} par band hua, jisme {data.get('nifty_change')} points ki badhat dekhi gayi. Sensex bhi {data.get('sensex')} par close hua. Market experts ka manna hai ki global cues ki wajah se investors mein utsah hai. Aisi hi daily updates ke liye hamare channel ko abhi subscribe karein. Disclaimer: Yeh sirf educational information hai."
+    return f"Latest {niche} update: Markets are showing interesting trends today with {json.dumps(data)}. Stay tuned and subscribe for more detailed analysis."
 
 # --- VOICE GENERATION ---
 def generate_voice(text, filename="voice.mp3"):
     path = os.path.join(TEMP_DIR, filename)
+    # Sarvam allows up to 1500 chars for Bulbul v2
+    safe_text = text[:1400] 
+    
     # Try Sarvam
     try:
         url = "https://api.sarvam.ai/text-to-speech"
         headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
-        payload = {"text": text[:500], "target_language_code": "hi-IN", "speaker": "anushka", "model": "bulbul:v2"}
+        payload = {"text": safe_text, "target_language_code": "hi-IN", "speaker": "anushka", "model": "bulbul:v2"}
         r = requests.post(url, json=payload, headers=headers, timeout=30)
         if r.status_code == 200:
             audio_data = base64.b64decode(r.json()['audios'][0])
@@ -160,7 +186,7 @@ def generate_voice(text, filename="voice.mp3"):
     # Try gTTS
     try:
         from gtts import gTTS
-        tts = gTTS(text=text[:500], lang='hi')
+        tts = gTTS(text=safe_text, lang='hi')
         tts.save(path)
         return path
     except:
@@ -171,28 +197,86 @@ def generate_voice(text, filename="voice.mp3"):
 def get_broll(query):
     try:
         headers = {"Authorization": PEXELS_API_KEY}
-        url = f"https://api.pexels.com/videos/search?query={query}&per_page=3&orientation=portrait"
+        # Increased to 15 clips for 60s video
+        url = f"https://api.pexels.com/videos/search?query={query}&per_page=15&orientation=portrait"
         res = requests.get(url, headers=headers).json()
         return [v['video_files'][0]['link'] for v in res.get('videos', [])]
     except:
         return []
 
-def create_video(niche, voice_path, broll_urls):
+def create_video(niche, voice_path, broll_urls, script_text=""):
     output_path = os.path.join(TEMP_DIR, f"final_{niche}.mp4")
     try:
         audio = AudioFileClip(voice_path)
+        target_duration = audio.duration
+        print(f"Target Video Duration: {target_duration}s")
+        
         clips = []
+        current_duration = 0
+        
         for i, url in enumerate(broll_urls):
+            if current_duration >= target_duration:
+                break
+                
             tmp_vid = os.path.join(TEMP_DIR, f"tmp_{i}.mp4")
             r = requests.get(url, stream=True)
             with open(tmp_vid, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1024*1024):
                     f.write(chunk)
-            clip = VideoFileClip(tmp_vid).subclip(0, audio.duration/len(broll_urls)).resize(height=720)
-            clips.append(clip)
+            
+            try:
+                clip = VideoFileClip(tmp_vid).resize(height=1280) # 9:16 target
+                # Crop to 720x1280 if wider
+                w, h = clip.size
+                if w > 720:
+                    clip = clip.crop(x1=(w-720)//2, y1=0, x2=(w+720)//2, y2=1280)
+                
+                # Dynamic duration for this clip
+                remaining = target_duration - current_duration
+                clip_dur = min(clip.duration, 5) # Use max 5s per clip for fast pacing
+                clip_dur = min(clip_dur, remaining)
+                
+                clip = clip.subclip(0, clip_dur)
+                
+                # Add subtle Zoom effect (Human-like editing)
+                clip = clip.resize(lambda t: 1 + 0.03 * t) 
+                
+                # Add crossfade transition
+                if clips:
+                    clip = clip.crossfadein(0.5)
+                
+                clips.append(clip)
+                current_duration += clip_dur
+            except Exception as e:
+                print(f"Clip {i} error: {e}")
+
+        if not clips:
+            return None
+
+        # Assemble Background
+        bg_video = concatenate_videoclips(clips, method="compose").set_audio(audio)
         
-        final_video = concatenate_videoclips(clips, method="compose").set_audio(audio)
-        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac", bitrate="2000k")
+        # --- ADVANCED NEWS OVERLAYS ---
+        
+        # 1. Breaking News Ticker (Bottom)
+        ticker_bg = ColorClip(size=(720, 60), color=(200, 0, 0)).set_opacity(0.8).set_duration(target_duration).set_position(('center', 1100))
+        
+        ticker_text = TextClip(f" BREAKING NEWS: {niche.upper()} UPDATES - LIVE ANALYSIS - SUBSCRIBE FOR MORE ", 
+                              fontsize=30, color='white', font='Arial-Bold', method='caption', size=(2000, None))
+        # Scrolling effect
+        scrolling_ticker = ticker_text.set_duration(target_duration).set_position(lambda t: (100 - 150*t, 1115))
+        
+        # 2. Headline Box (Top)
+        headline_bg = ColorClip(size=(600, 80), color=(0, 0, 0)).set_opacity(0.7).set_duration(target_duration).set_position(('center', 100))
+        headline_text = TextClip(f"{niche.upper()} TODAY", fontsize=40, color='yellow', font='Arial-Bold').set_duration(target_duration).set_position(('center', 120))
+
+        # 3. Channel Branding
+        branding = TextClip("@FINANCE_INSIGHTS", fontsize=25, color='white', font='Arial').set_duration(target_duration).set_opacity(0.5).set_position((450, 50))
+
+        # Combine all
+        final_video = CompositeVideoClip([bg_video, ticker_bg, scrolling_ticker, headline_bg, headline_text, branding])
+        
+        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac", bitrate="3000k")
         return output_path
     except Exception as e:
         print(f"Video Creation Error: {e}")
@@ -206,7 +290,8 @@ def upload_to_youtube(file_path, title, description):
         refresh_token=YT_REFRESH_TOKEN,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=YT_CLIENT_ID,
-        client_secret=YT_CLIENT_SECRET
+        client_secret=YT_CLIENT_SECRET,
+        scopes=['https://www.googleapis.com/auth/youtube.upload']
     )
     youtube = build('youtube', 'v3', credentials=creds)
     
