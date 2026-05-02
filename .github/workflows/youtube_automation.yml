@@ -33,7 +33,9 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg imagemagick
+          # Fix for MoviePy: allow ImageMagick to use fonts
+          sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml || echo "Policy fix skipped"
 
       - name: Install Python Dependencies
         run: |
