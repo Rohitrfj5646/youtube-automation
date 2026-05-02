@@ -146,32 +146,38 @@ def fetch_crypto_data():
 # --- SCRIPT GENERATION ---
 def generate_script(niche, data):
     prompt = f"""
-    Act as a professional financial news anchor. Create a 60-second YouTube Short script in Hinglish (Hindi + English) for the {niche} niche.
+    Act as a professional financial news anchor. 
+    Create a detailed 60-second news script in Hinglish (natural Hindi + English financial terms) for the {niche} niche.
+    
     Data for today: {json.dumps(data)}
     
     Structure:
-    1. Hook: Catchy opening.
-    2. Data: Mention the key numbers from the data provided.
-    3. Analysis: Quick 1-sentence insight.
-    4. Call to Action: Ask to subscribe.
-    5. Disclaimer: Standard SEBI/Financial disclaimer at the end.
+    1. Hook: Catchy opening that grabs attention.
+    2. Headlines: Top 2-3 news points based on the data.
+    3. Deep Dive: Explain the 'why' behind the numbers in simple but professional terms.
+    4. Market Sentiment: What should investors watch out for?
+    5. Call to Action: Professional invitation to subscribe for daily updates.
+    6. Disclaimer: Standard financial disclaimer.
     
     Rules:
-    - Language: Hinglish (Natural conversation like a news channel).
-    - Tone: Energetic and professional.
-    - DO NOT use words like 'guaranteed returns' or 'prediction'.
-    - Keep it under 150 words.
+    - Tone: Energetic, authoritative, and informative.
+    - Style: Natural conversation, not robotic.
+    - Length: Approximately 180-220 words (to hit 60 seconds).
+    - Language: Primarily Hindi with English technical terms (Market, Stocks, Bullish, Bearish, etc.).
+    - DO NOT use generic phrases; use the actual data provided.
     """
     
-    # Method 1: Try Gemini SDK models
+    # Try Gemini models
     models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash']
     for model_name in models_to_try:
         try:
             print(f"Trying Gemini model: {model_name}")
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            print(f"Script generated successfully with model: {model_name}")
-            return response.text
+            script = response.text.strip()
+            if len(script.split()) > 100:
+                print(f"Script generated successfully with model: {model_name}")
+                return script
         except Exception as e:
             print(f"Model {model_name} failed: {e}")
     
@@ -215,12 +221,15 @@ def generate_script(niche, data):
 
 # --- VOICE GENERATION ---
 def generate_voice(text, filename="voice.mp3"):
+    # Increased limit to 1500 chars
+    safe_text = text[:1400]
+    
     # Method 1: Sarvam AI TTS
     try:
         url = "https://api.sarvam.ai/text-to-speech"
         headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
         payload = {
-            "text": text[:500],  # Sarvam has text length limits
+            "text": safe_text,
             "target_language_code": "hi-IN",
             "speaker": "anushka",
             "model": "bulbul:v2"
@@ -228,33 +237,26 @@ def generate_voice(text, filename="voice.mp3"):
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             resp_json = response.json()
-            # Handle both old ('audio_content') and new ('audios') response formats
             if 'audios' in resp_json and resp_json['audios']:
                 audio_data = base64.b64decode(resp_json['audios'][0])
             elif 'audio_content' in resp_json:
                 audio_data = base64.b64decode(resp_json['audio_content'])
             else:
-                print(f"Sarvam: Unknown response format: {list(resp_json.keys())}")
                 raise Exception("Unknown Sarvam response format")
             with open(filename, "wb") as f:
                 f.write(audio_data)
-            print(f"Voice generated via Sarvam AI: {filename}")
             return filename
-        else:
-            print(f"Sarvam AI Error ({response.status_code}): {response.text[:200]}")
     except Exception as e:
         print(f"Sarvam TTS failed: {e}")
     
-    # Method 2: gTTS fallback (always free, no API key needed)
+    # Method 2: gTTS fallback
     try:
         from gtts import gTTS
-        print("Falling back to gTTS...")
-        tts = gTTS(text=text[:500], lang='hi', slow=False)
+        tts = gTTS(text=safe_text, lang='hi', slow=False)
         tts.save(filename)
-        print(f"Voice generated via gTTS: {filename}")
         return filename
     except Exception as e:
-        print(f"gTTS also failed: {e}")
+        print(f"gTTS failed: {e}")
     
     return None
 
@@ -308,76 +310,67 @@ def get_broll_with_urls(query, count=3):
 def create_video(niche, script_text, voice_path, broll_urls, output_path="/tmp/final_video.mp4"):
     temp_files = []
     try:
-        print(f"Starting video assembly for {niche}...")
+        from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, ColorClip
+        print(f"Starting advanced video assembly for {niche}...")
 
-        # 1. Load Audio
         audio = AudioFileClip(voice_path)
-        total_duration = min(audio.duration, 60)  # Cap at 60 seconds
-
-        # 2. Download broll videos to temp files (avoid streaming RAM issues)
+        target_duration = audio.duration
+        
+        # 2. Download broll videos
         local_videos = []
-        for i, url in enumerate(broll_urls[:3]):  # Max 3 clips
+        for i, url in enumerate(broll_urls):
             tmp_path = f"/tmp/broll_{i}.mp4"
             temp_files.append(tmp_path)
-            result = download_video(url, tmp_path)
-            if result:
+            if download_video(url, tmp_path):
                 local_videos.append(tmp_path)
-            if len(local_videos) >= 3:
-                break
+            if len(local_videos) >= 15: break
 
-        if not local_videos:
-            print("No broll videos downloaded. Cannot create video.")
-            return None
+        if not local_videos: return None
 
-        # 3. Build clips
-        num_clips = len(local_videos)
-        duration_per_clip = total_duration / num_clips
+        # 3. Build clips with Zoom Effect
         clips = []
-
+        current_duration = 0
         for i, vid_path in enumerate(local_videos):
+            if current_duration >= target_duration: break
             try:
-                clip = VideoFileClip(vid_path)
-                # Use subclip safely
-                clip_dur = min(duration_per_clip, clip.duration)
-                clip = clip.subclip(0, clip_dur)
-                # Resize to 720x1280 (9:16) - low quality to save RAM
-                clip = clip.resize(height=720)
+                clip = VideoFileClip(vid_path).resize(height=1280)
                 w, h = clip.size
-                if w > 405:
-                    clip = clip.crop(x1=(w-405)//2, y1=0, x2=(w+405)//2, y2=720)
+                if w > 720: clip = clip.crop(x1=(w-720)//2, y1=0, x2=(w+720)//2, y2=1280)
+                
+                remaining = target_duration - current_duration
+                clip_dur = min(clip.duration, 5, remaining)
+                clip = clip.subclip(0, clip_dur).resize(lambda t: 1 + 0.03 * t)
+                if clips: clip = clip.crossfadein(0.5)
+                
                 clips.append(clip)
-            except Exception as ce:
-                print(f"Clip {i} failed: {ce}")
+                current_duration += clip_dur
+            except: continue
 
-        if not clips:
-            print("No clips assembled.")
-            return None
+        if not clips: return None
 
-        # 4. Concatenate + Audio
-        final_video = concatenate_videoclips(clips, method="compose")
-        final_video = final_video.set_audio(audio.subclip(0, final_video.duration))
+        # 4. Assemble
+        bg_video = concatenate_videoclips(clips, method="compose").set_audio(audio)
+        
+        # 5. Overlays (Ticker + Headlines)
+        ticker_bg = ColorClip(size=(720, 60), color=(200, 0, 0)).set_opacity(0.8).set_duration(target_duration).set_position(('center', 1100))
+        ticker_text = TextClip(f" BREAKING NEWS: {niche.upper()} UPDATES - LIVE ANALYSIS - SUBSCRIBE FOR MORE ", 
+                              fontsize=30, color='white', font='Arial-Bold', method='caption', size=(2000, None)).set_duration(target_duration).set_position(lambda t: (100 - 150*t, 1115))
+        
+        headline_bg = ColorClip(size=(600, 80), color=(0, 0, 0)).set_opacity(0.7).set_duration(target_duration).set_position(('center', 100))
+        headline_text = TextClip(f"{niche.upper()} NEWS", fontsize=40, color='yellow', font='Arial-Bold').set_duration(target_duration).set_position(('center', 120))
 
-        # 5. Write output - low bitrate to save RAM/disk
-        final_video.write_videofile(
-            output_path, fps=24, codec="libx264",
-            audio_codec="aac", bitrate="800k",
-            temp_audiofile="/tmp/temp-audio.m4a",
-            remove_temp=True, verbose=False, logger=None
-        )
-        print(f"Video created: {output_path}")
-
-        # 6. Cleanup
-        for c in clips:
-            try: c.close()
-            except: pass
-        audio.close()
-        final_video.close()
-
+        final_video = CompositeVideoClip([bg_video, ticker_bg, ticker_text, headline_bg, headline_text])
+        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac", bitrate="2500k", temp_audiofile="/tmp/temp-audio.m4a", remove_temp=True, verbose=False, logger=None)
+        
         return output_path
-
     except Exception as e:
         print(f"Video assembly failed: {e}")
         return None
+    finally:
+        for f in temp_files:
+            try:
+                if os.path.exists(f): os.remove(f)
+            except: pass
     finally:
         # Always clean up temp video files
         for f in temp_files:
@@ -402,7 +395,8 @@ def get_youtube_service():
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
-        client_secret=client_secret
+        client_secret=client_secret,
+        scopes=['https://www.googleapis.com/auth/youtube.upload']
     )
     
     if creds.expired and creds.has_scopes():
@@ -491,7 +485,14 @@ def run_pipeline(niche):
             conn.commit()
             bot.send_message(TELEGRAM_CHAT_ID, f"✅ Video Successfully Uploaded to YouTube! ID: {vid_id}\nLink: https://youtu.be/{vid_id}")
         except Exception as e:
-            bot.send_message(TELEGRAM_CHAT_ID, f"❌ Auto-upload failed for {niche}: {e}")
+            error_msg = str(e)
+            if "invalid_grant" in error_msg.lower():
+                msg = f"❌ YouTube Token Expired for {niche}!\n\n"
+                msg += "Reason: Your Google App is likely in 'Testing' mode (7-day expiry).\n\n"
+                msg += "FIX:\n1. Go to Google Cloud Console.\n2. Set project to 'PRODUCTION'.\n3. Generate new refresh token.\n4. Update GitHub Secrets."
+                bot.send_message(TELEGRAM_CHAT_ID, msg)
+            else:
+                bot.send_message(TELEGRAM_CHAT_ID, f"❌ Auto-upload failed for {niche}: {error_msg}")
     else:
         # Send to Telegram for approval
         try:
@@ -505,8 +506,9 @@ def run_pipeline(niche):
 
 # --- SCHEDULER ---
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
+# 8 AM: Stocks
 scheduler.add_job(lambda: run_pipeline("Stocks"), 'cron', hour=8, minute=0)
-scheduler.add_job(lambda: run_pipeline("Forex"), 'cron', hour=12, minute=0)
+# 5 PM: Crypto
 scheduler.add_job(lambda: run_pipeline("Crypto"), 'cron', hour=17, minute=0)
 scheduler.start()
 
